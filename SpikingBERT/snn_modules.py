@@ -114,7 +114,7 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
         super(SNNBERTSpikingLIFFuncMultiLayer, self).__init__(network_s_list, network_x, vth, fb_num)
         self.leaky = torch.tensor(leaky, requires_grad=False)
         
-        # 특성 이름 정의
+        # Feature names
         self.feature_names = [
             'prev_spike_rate',
             'mean_voltage',
@@ -135,23 +135,21 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
         
         self.layer_history = {}
         
-        # 로깅 설정 추가
+        # Logging setup
         self.log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'logs', 'spike_features')
         os.makedirs(self.log_dir, exist_ok=True)
         
-        # 성능 메트릭 저장
         self.current_loss = None
         self.current_accuracy = None
         
-        # 모델 상태 초기화
         #self.spike_predictor = None
         self.layer_history = {}
         
-        # 추론 최적화를 위한 설정
-        self.eval()  # 평가 모드로 설정
+     
+        self.eval()  
         
     def prepare_features(self, layer_idx, u, s=None):
-        """예측을 위한 특성 준비 - CPU 변환 처리 추가"""
+        """Prepare features for prediction - CPU conversion"""
         try:
             if layer_idx not in self.layer_history:
                 self.layer_history[layer_idx] = {
@@ -168,12 +166,12 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
             
 
 
-            # GPU 텐서를 CPU로 이동 후 계산
+           
             if not torch.isnan(torch.mean(u)):
                 current_voltage = torch.mean(u).cpu().item()
                 voltage_threshold_ratio = current_voltage / self.vth.cpu().item()
                 
-            # 히스토리 업데이트
+          
                 history['mean_voltage'].append(current_voltage)
                 history['mean_voltage'] = history['mean_voltage'][-10:]
                 history['voltage_threshold_ratio'].append(voltage_threshold_ratio)
@@ -183,7 +181,7 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
             history['train_loss'] = self.current_loss if self.current_loss else 0.0
             
             
-            # 스파이크 계산 시 CPU로 이동
+          
             if s is not None:
                 current_spike_rate = torch.mean(s).cpu().item()
                 history['prev_spike_rate'] = current_spike_rate
@@ -191,7 +189,7 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
                 total_elements = s.numel() * (len(history['mean_voltage']))
                 history['cumulative_spikes'] = history['spike_count'] / max(1, total_elements)
             
-            # NumPy 배열로 변환 전에 모든 값이 CPU에 있는지 확인
+            
             features = [
                 history['prev_spike_rate'],
                 abs(np.mean(history['mean_voltage'])),
@@ -213,19 +211,13 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
             return 1.0
             
         try:
-            # 특성 준비 (CPU에서 처리)
+          
             features = self.prepare_features(layer_idx, u, s)
             features_df = pd.DataFrame(features, columns=self.feature_names)
             
-            # NaN 체크 및 처리
-            
-            #if self.scaler is not None:
-            #    features = self.scaler.transform(features_df)
-            
-            # GPU 메모리 최적화를 위한 처리
             result = predict_spike(self.spike_predictor, self.scaler, features)
             
-            # 예측된 업데이트 비율 저장
+        
             if layer_idx in self.layer_history:
                 self.layer_history[layer_idx]['predicted_update_rate'] = float(result) if not np.isnan(result) else 0.0
             
@@ -236,46 +228,42 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
             return 1.0
 
     def update_metrics(self, loss, accuracy):
-        """현재 성능 메트릭 업데이트"""
+       
         self.current_loss = loss
         self.current_accuracy = accuracy
         
         
     def snn_forward(self, x, segment_ids, time_step, flag_num=None, output_type='normal', input_type='constant', attention_mask=None, train_loss=None):
-        # GPU 메모리 최적화
-        torch.cuda.empty_cache()  # 시작 전 GPU 캐시 정리
+        
+        torch.cuda.empty_cache()  
     
-        # 학습 손실이 제공된 경우 메트릭 업데이트
+       
         
         self.update_metrics(train_loss, None)
-        
-        # 중간 결과를 저장하는 리스트들을 CPU에 유지
+       
         u_list = []
         s_list = []
         attn_list = []
         fac = 1.0
         if input_type == 'constant':
             x1 = self.network_x(x, segment_ids)
-            x1 = x1.detach()  # 그래디언트 히스토리 제거
+            x1 = x1.detach()  
         
-        # 첫 번째 레이어 처리
+     
         u1 = x1
         s1 = (u1 >= self.vth).float()
         u1 = u1 - self.vth * s1
         u1 = u1 * self.leaky
         
-        # 각 레이어마다 누적 스파이크 초기화
+    
         if not hasattr(self, 'cumulative_spikes'):
             self.cumulative_spikes = {}
         
-        # 첫 번째 레이어 로깅
-        #self._init_logging()
-        #self._log_features(0, 0, u1, s1, None, 0.0, train_loss)
-        
+       
         u_list.append(u1)
         s_list.append(s1)
         
-        # 나머지 레이어 초기 처리
+       
         for i in range(len(self.network_s_list) - 1):
             if i % 6 == 0:
                 ui = self.network_s_list[i](s_list[-1])
@@ -306,7 +294,7 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
         af = s_list[0]
         al = s_list[-self.fb_num]
 
-        # a_per_layer 초기화
+   
         a_per_layer = []
         avg_attn = []
         for i in range(len(s_list)):
@@ -319,10 +307,10 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
             for s in s_list:
                 r_list.append(s)
 
-        # 나머지 타임스텝 처리
+   
         for t in range(time_step - 1):
-            # GPU 캐시 정리는 메모리 부족 시에만 수행
-            if t % 10 == 0:  # 주기적으로만 수행
+            
+            if t % 10 == 0:
                 torch.cuda.empty_cache()
             
             if input_type == 'constant':
@@ -332,12 +320,10 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
             u_list[0] = u_list[0] - self.vth * s_list[0]
             u_list[0] = u_list[0] * self.leaky
             
-            # 첫 번째 레이어 로깅
-            #self._log_features(0, t+1, u_list[0], s_list[0], None, 0.0, train_loss)
-
+            
             for i in range(len(self.network_s_list) - 1):
-                if i % 6 == 0:  # Attention 레이어마다 예측 수행
-                    #predicted_rate = self.predict_spike_update(i+1, u_list[i+1], s_list[i])
+                if i % 6 == 0: 
+                    #predicted_rate = self.predict_spike_update(i+1, u_list[i+1], s_list[i]) # Use this line if you want to use spike predictor
                     
                     #u_list[i + 1] = u_list[i + 1] + self.network_s_list[i](s_list[i]) + torch.tensor(predicted_rate).to(u_list[i + 1].device)
                     u_list[i + 1] = u_list[i + 1] + (self.network_s_list[i](s_list[i]) * 0.5)
@@ -366,19 +352,17 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
                 
                 
                 
-                # 각 레이어 로깅
-                #self._log_features(i+1, t+1, u_list[i + 1], s_list[i + 1], s_list[i], 0.0, train_loss)
+                
 
             af = af * self.leaky + s_list[0]
             al = al * self.leaky + s_list[-self.fb_num]
 
-            #self.predicted_update_rate = predicted_rate
-            # 벡터화된 누적 연산
+           
             if len(s_list) > 0:
-                # 모든 레이어의 스파이크를 한 번에 누적
+               
                 a_per_layer = [a + s for a, s in zip(a_per_layer, s_list)]
                 
-            # 어텐션 값도 한 번에 누적
+            
             if len(attn_list) > 0:
                 avg_attn = [a + attn for a, attn in zip(avg_attn, attn_list)]
 
@@ -391,7 +375,7 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
         if output_type == 'normal':
             return af / weighted, al / weighted
         elif output_type == 'all_layers':
-            # 벡터화된 평균 계산
+           
             scale = 1.0 / time_step
             a_per_layer = [a * scale for a in a_per_layer]
             mean_spikes = torch.mean(torch.stack([torch.mean(layer) for layer in a_per_layer]))
@@ -420,7 +404,7 @@ class SNNBERTSpikingLIFFuncMultiLayer(SNNFuncMultiLayer):
         
         update_rate = update_rate if type(update_rate) == float else torch.mean(update_rate)
         spike_change = torch.mean(torch.abs(u-s))
-        # CSV에 기록
+       
         with open(self.csv_path, 'a') as f:
             f.write(f"{features[0]:.6f},{features[1]:.6f},{update_rate:.6f},"
                    f"{features[2]:.6f},{features[3]:.6f},"
