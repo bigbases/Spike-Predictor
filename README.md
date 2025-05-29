@@ -1,7 +1,7 @@
 # Spike-Predictor
 
-##Using SpikingBERT
+## Using SpikingBERT
 Paste the snn_modules.py into SpikingBERT
 
-##Using Spike Predictor
+## Using Spike Predictor
 Use load_predictor in spike_update_predictor.py
